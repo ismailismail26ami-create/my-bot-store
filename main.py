@@ -4,83 +4,78 @@ from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# --- الإعدادات ---
 TOKEN = '8949634245:AAHDezYpc8vNp2jdDPVQ00a2_a4Ua5FLanM'
 ADMIN_ID = 7339897843
-CHANNEL_ID = '@RAMD02I'
 CONTACT_LINK = 'https://t.me/RMAD3'
 
 bot = Bot(token=TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
+dp = Dispatcher()
 
-# --- الحالات ---
-class AddAccount(StatesGroup):
-    type = State()
-    desc = State()
-    price = State()
-    rating = State()
+class AdminStates(StatesGroup):
+    add_type = State()
+    add_desc = State()
+    add_price = State()
+    add_media = State() # سميناها media لتقبل صور أو فيديوهات
 
-# --- قاعدة البيانات ---
 async def init_db():
     async with aiosqlite.connect('store.db') as db:
-        await db.execute('CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY, type TEXT, desc TEXT, price TEXT)')
+        await db.execute('CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, desc TEXT, price TEXT, media_id TEXT, media_type TEXT)')
         await db.commit()
 
-# --- فحص الاشتراك ---
-async def is_subscribed(user_id):
-    try:
-        member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-        return member.status in ['member', 'administrator', 'creator']
-    except: return False
-
-# --- الأزرار ---
-def main_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
+def main_menu(user_id):
+    buttons = [
         [InlineKeyboardButton(text="🎮 فري فاير", callback_data="page_ff_0"),
          InlineKeyboardButton(text="📘 فيسبوك", callback_data="page_fb_0")],
         [InlineKeyboardButton(text="🎵 تيك توك", callback_data="page_tt_0")],
-        [InlineKeyboardButton(text="⭐ تقييم البوت", callback_data="rate_bot"),
-         InlineKeyboardButton(text="📞 تواصل معي", url=CONTACT_LINK)]
-    ])
-
-def get_nav_markup(acc_type, index, total):
-    buttons = []
-    nav_row = []
-    if index > 0: nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"page_{acc_type}_{index-1}"))
-    if index < total - 1: nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"page_{acc_type}_{index+1}"))
-    if nav_row: buttons.append(nav_row)
-    buttons.append([InlineKeyboardButton(text="💰 شراء الحساب", url=CONTACT_LINK)])
-    buttons.append([InlineKeyboardButton(text="🏠 الرئيسية", callback_data="main")])
+        [InlineKeyboardButton(text="📞 تواصل معي", url=CONTACT_LINK)]
+    ]
+    if user_id == ADMIN_ID:
+        buttons.append([InlineKeyboardButton(text="🛠 لوحة تحكم الأدمن", callback_data="admin_panel")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# --- الأوامر ---
 @dp.message(Command("start"))
 async def start(msg: types.Message):
-    if not await is_subscribed(msg.from_user.id):
-        await msg.answer(f"⚠️ يرجى الاشتراك في القناة أولاً لتفعيل البوت:\n{CHANNEL_ID}")
-        return
-    await msg.answer("مرحباً بك في متجرنا الرقمي! اختر قسماً:", reply_markup=main_menu())
+    await msg.answer("مرحباً بك في متجرنا! اختر قسماً:", reply_markup=main_menu(msg.from_user.id))
 
-@dp.callback_query(F.data == "main")
-async def back_to_main(call: types.CallbackQuery):
-    await call.message.edit_text("مرحباً بك في المتجر! اختر قسماً:", reply_markup=main_menu())
+@dp.callback_query(F.data == "admin_panel")
+async def admin_panel(call: types.CallbackQuery):
+    if call.from_user.id != ADMIN_ID: return
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ إضافة حساب", callback_data="add_acc")],
+        [InlineKeyboardButton(text="🏠 الرئيسية", callback_data="main_menu")]
+    ])
+    await call.message.edit_text("🛠 لوحة تحكم الأدمن:", reply_markup=kb)
 
-# --- التقييم ---
-@dp.callback_query(F.data == "rate_bot")
-async def rate_start(call: types.CallbackQuery, state: FSMContext):
-    await call.message.edit_text("نقدر رأيك! أرسل تقييمك في رسالة:")
-    await state.set_state(AddAccount.rating)
+@dp.callback_query(F.data == "add_acc")
+async def start_add(call: types.CallbackQuery, state: FSMContext):
+    await call.message.answer("أرسل نوع الحساب (ff, fb, tt):")
+    await state.set_state(AdminStates.add_type)
 
-@dp.message(AddAccount.rating)
-async def get_rating(msg: types.Message, state: FSMContext):
-    await bot.send_message(ADMIN_ID, f"⭐ تقييم جديد من {msg.from_user.full_name}:\n{msg.text}")
-    await msg.answer("✅ شكراً لك على تقييمك!")
-    await state.clear()
+@dp.message(AdminStates.add_type)
+async def get_type(msg: types.Message, state: FSMContext):
+    await state.update_data(type=msg.text); await msg.answer("أرسل الوصف:"); await state.set_state(AdminStates.add_desc)
 
-# --- عرض الحسابات ---
+@dp.message(AdminStates.add_desc)
+async def get_desc(msg: types.Message, state: FSMContext):
+    await state.update_data(desc=msg.text); await msg.answer("أرسل السعر:"); await state.set_state(AdminStates.add_price)
+
+@dp.message(AdminStates.add_price)
+async def get_price(msg: types.Message, state: FSMContext):
+    await state.update_data(price=msg.text); await msg.answer("أرسل صورة أو فيديو للحساب:"); await state.set_state(AdminStates.add_media)
+
+@dp.message(AdminStates.add_media, F.photo | F.video)
+async def save_acc(msg: types.Message, state: FSMContext):
+    media_id = msg.photo[-1].file_id if msg.photo else msg.video.file_id
+    media_type = 'photo' if msg.photo else 'video'
+    data = await state.get_data()
+    async with aiosqlite.connect('store.db') as db:
+        await db.execute("INSERT INTO accounts (type, desc, price, media_id, media_type) VALUES (?,?,?,?,?)", 
+                         (data['type'], data['desc'], data['price'], media_id, media_type))
+        await db.commit()
+    await msg.answer("✅ تم الإضافة بنجاح!"); await state.clear()
+
 @dp.callback_query(F.data.startswith("page_"))
 async def show_accounts(call: types.CallbackQuery):
     _, acc_type, index = call.data.split("_")
@@ -88,35 +83,15 @@ async def show_accounts(call: types.CallbackQuery):
     async with aiosqlite.connect('store.db') as db:
         cursor = await db.execute("SELECT * FROM accounts WHERE type=?", (acc_type,))
         accs = await cursor.fetchall()
-    if not accs:
-        await call.answer("لا توجد حسابات في هذا القسم!")
-        return
+    if not accs: await call.answer("لا توجد حسابات!"); return
     acc = accs[index]
-    await call.message.edit_text(f"📦 ({index+1}/{len(accs)})\n📝 {acc[2]}\n💵 السعر: {acc[3]}", 
-                                 reply_markup=get_nav_markup(acc_type, index, len(accs)))
+    caption = f"📝 {acc[2]}\n💵 السعر: {acc[3]}"
+    if acc[5] == 'photo': await bot.send_photo(call.message.chat.id, photo=acc[4], caption=caption)
+    else: await bot.send_video(call.message.chat.id, video=acc[4], caption=caption)
 
-# --- إضافة حساب (للأدمن فقط) ---
-@dp.message(Command("add"))
-async def admin_add(msg: types.Message, state: FSMContext):
-    if msg.from_user.id != ADMIN_ID: return
-    await msg.answer("أرسل نوع الحساب (ff, fb, tt):")
-    await state.set_state(AddAccount.type)
-
-@dp.message(AddAccount.type)
-async def get_type(msg: types.Message, state: FSMContext):
-    await state.update_data(type=msg.text); await msg.answer("أرسل الوصف:"); await state.set_state(AddAccount.desc)
-
-@dp.message(AddAccount.desc)
-async def get_desc(msg: types.Message, state: FSMContext):
-    await state.update_data(desc=msg.text); await msg.answer("أرسل السعر:"); await state.set_state(AddAccount.price)
-
-@dp.message(AddAccount.price)
-async def save_acc(msg: types.Message, state: FSMContext):
-    data = await state.get_data()
-    async with aiosqlite.connect('store.db') as db:
-        await db.execute("INSERT INTO accounts (type, desc, price) VALUES (?,?,?)", (data['type'], data['desc'], msg.text))
-        await db.commit()
-    await msg.answer("✅ تم إضافة الحساب!"); await state.clear()
+@dp.callback_query(F.data == "main_menu")
+async def back_to_main(call: types.CallbackQuery):
+    await call.message.edit_text("مرحباً بك في متجرنا! اختر قسماً:", reply_markup=main_menu(call.from_user.id))
 
 async def main():
     await init_db()
